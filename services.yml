@@ -1,0 +1,6 @@
+# Services pinged by .github/workflows/keep-alive.yml (twice a day).
+# Add one entry per service: a display name and the URL to hit.
+
+services:
+  - name: Quip Project
+    url: https://quip.harshdoshi.top

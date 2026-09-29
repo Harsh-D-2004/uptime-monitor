@@ -1,0 +1,55 @@
+name: Keep Alive
+
+on:
+  schedule:
+    # Twice a day: 00:00 and 12:00 UTC
+    - cron: "0 0,12 * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ping services
+        env:
+          TIMEOUT_SECONDS: 30
+        run: |
+          count=$(yq '.services | length' services.yml)
+          if [ "$count" -eq 0 ]; then
+            echo "No services defined in services.yml"
+            exit 0
+          fi
+
+          failed=()
+          echo "| Service | URL | Status | Time |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+
+          for i in $(seq 0 $((count - 1))); do
+            name=$(yq ".services[$i].name" services.yml)
+            url=$(yq ".services[$i].url" services.yml)
+
+            echo "::group::$name ($url)"
+            # Retry once: a sleeping Render instance can take a while to cold start
+            result=$(curl -fsS -o /dev/null -w '%{http_code} %{time_total}' \
+              --max-time "$TIMEOUT_SECONDS" --retry 1 --retry-delay 5 --retry-all-errors \
+              -L "$url") || true
+            read -r code time <<< "$result"
+            echo "::endgroup::"
+
+            if [[ "$code" =~ ^[23][0-9][0-9]$ ]]; then
+              echo "✅ $name -> $code in ${time}s"
+              echo "| $name | $url | ✅ $code | ${time}s |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::error title=$name is down::$url returned '${code:-no response}'"
+              echo "| $name | $url | ❌ ${code:-timeout/error} | ${time:-–}s |" >> "$GITHUB_STEP_SUMMARY"
+              failed+=("$name")
+            fi
+          done
+
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "Failed: ${failed[*]}"
+            exit 1
+          fi
